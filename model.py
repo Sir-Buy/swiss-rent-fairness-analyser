@@ -109,6 +109,19 @@ class ClusterModel:
         return self.n_train + self.n_test
 
 
+# Pickle portability: when model.py is run as `python model.py`, this dataclass
+# is defined under __module__ == "__main__". The resulting pickle would then
+# refer to `__main__.ClusterModel`, which app.py (a different __main__) can't
+# resolve. Two-step workaround:
+#   1) Alias the running module as "model" in sys.modules. setdefault keeps the
+#      no-op behaviour when model.py is normally imported as `model`.
+#   2) Pin ClusterModel.__module__ to "model" so pickle dumps "model.ClusterModel".
+# Both together: pickle's identity check (`sys.modules['model'].ClusterModel is
+# ClusterModel`) passes regardless of build entry point.
+sys.modules.setdefault("model", sys.modules[__name__])
+ClusterModel.__module__ = "model"
+
+
 def _fit_one(train_df: pd.DataFrame, test_df: pd.DataFrame) -> tuple[LinearRegression, float, float, float]:
     """Fit log(price) ~ log(size_m2) + rooms on train; return model + test-set residual stats."""
     Xtr = np.column_stack([np.log(train_df["size_m2"]), train_df["rooms"]])

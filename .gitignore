@@ -13,3 +13,7 @@ _probe*.py
 _probe*.html
 _probe*.out
 _stats.py
+_ui_smoke.py
+_check_submit.py
+_quick_check.py
+data/ui_smoke/
