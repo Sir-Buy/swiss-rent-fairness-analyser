@@ -66,6 +66,13 @@ def load_cluster_summary() -> pd.DataFrame:
 
 @st.cache_resource
 def load_model() -> FairPriceModel:
+    # data/model.pkl is gitignored, so a fresh Streamlit Cloud deploy starts
+    # without it. data/clustered.csv IS tracked, so we can rebuild the pickle
+    # in-place on the first cold start. Subsequent requests reuse the cache.
+    pkl_path = DATA_DIR / "model.pkl"
+    if not pkl_path.exists():
+        from model import build as _rebuild_model
+        _rebuild_model()
     return FairPriceModel()
 
 

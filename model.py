@@ -57,6 +57,7 @@ import pandas as pd
 import pgeocode
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -213,22 +214,35 @@ def build_models(df: pd.DataFrame, scaler) -> dict:
 
 
 def build() -> None:
+    """Build data/model.pkl from data/clustered.csv. Self-contained — does NOT
+    depend on a pre-existing pickle, so this works on a fresh Streamlit Cloud
+    deploy where cluster.py hasn't been re-run."""
     if not CLUSTERED_CSV.exists():
         raise SystemExit(f"missing input: {CLUSTERED_CSV}. Run cluster.py first.")
-    if not MODEL_PKL.exists():
-        raise SystemExit(f"missing input: {MODEL_PKL}. Run cluster.py first.")
 
-    with open(MODEL_PKL, "rb") as f:
-        base = pickle.load(f)
-    scaler = base["scaler"]
+    # PALETTE/K/FEATURES live in cluster.py (single source of truth for the
+    # clustering hyperparameters). Imported here at build time so we don't
+    # have to depend on the Step 3 pickle existing.
+    from cluster import FEATURES as CLUSTER_FEATURES, PALETTE, K
 
     df = pd.read_csv(CLUSTERED_CSV)
+    # Refit StandardScaler from the clustered data. Identical to cluster.py's
+    # scaler because both fit on the same rows + features. Refitting here
+    # decouples model.build() from cluster.py's pickle.
+    scaler = StandardScaler().fit(df[CLUSTER_FEATURES].to_numpy(dtype=float))
+
     extra = build_models(df, scaler)
 
-    base.update(extra)
+    out = {
+        "scaler": scaler,
+        "features": CLUSTER_FEATURES,
+        "palette": PALETTE,
+        "k": K,
+        **extra,
+    }
     with open(MODEL_PKL, "wb") as f:
-        pickle.dump(base, f)
-    print(f"\nExtended {MODEL_PKL.name} with cluster_models + global_model.")
+        pickle.dump(out, f)
+    print(f"\nWrote {MODEL_PKL.name} (scaler + cluster_models + global_model).")
 
 
 # ----------------------------------------------------------------------------
