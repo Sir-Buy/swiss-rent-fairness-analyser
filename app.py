@@ -1,25 +1,23 @@
 """
-app.py — Streamlit UI for the Swiss Rent Fairness Analyser.
+app.py - Streamlit UI for the Swiss Rent Fairness Analyser.
 
 Four tabs:
-  1. Market Map           — folium + MarkerCluster, 6-tone viridis palette
-                            shared with cluster.py / cluster_summary.
-  2. Am I Paying Too Much?— evaluate_fairness form, verdict banner, bar chart,
-                            top-10 nearest comparable listings.
-  3. What Should I Charge?— optimize_rent form, suggested + 10/90 percentile
-                            band, histogram of cluster prices with vertical
-                            line at the suggestion.
-  4. Method               — pipeline explanation, embedded dendrogram, cluster
-                            summary table, paragraph on each ML choice.
+  1. Market Map: folium + MarkerCluster, markers coloured by cluster.
+  2. Am I Paying Too Much?: form -> evaluate_fairness, verdict banner,
+     metrics, bar chart, ten nearest comparable listings.
+  3. What Should I Charge?: form -> optimize_rent, metrics, histogram
+     of cluster prices with a suggestion line.
+  4. Method: pipeline writeup, embedded dendrogram, cluster summary table,
+     paragraph on each ML choice.
 
-Sidebar filters scope **Tab 1 only** so the evaluator (Tab 2) and the
-optimiser (Tab 3) always use the full per-cluster regression — surprising
-sidebar-state-coupling on prediction tools would be confusing.
+Sidebar filters (canton, cluster, price range, rooms range) scope Tab 1
+only. The evaluator and optimiser always use the full per-cluster
+regressions so sidebar state doesn't silently affect predictions.
 
-Caching:
-  st.cache_data on the CSV loaders, st.cache_resource on the FairPriceModel
-  (the pickle holds the StandardScaler + 6 LinearRegression objects + a
-  pgeocode lookup table). The model is never refit at request time.
+Caching: st.cache_data on the CSV loaders, st.cache_resource on the
+FairPriceModel. The model is loaded once and never refit at request time.
+On a fresh deploy data/model.pkl is missing (gitignored) so load_model
+rebuilds it from data/clustered.csv on first request.
 """
 
 from __future__ import annotations
@@ -93,7 +91,7 @@ st.caption(
 
 
 # ----------------------------------------------------------------------------
-# Sidebar — filters affect Tab 1 (Market Map) only.
+# Sidebar - filters affect Tab 1 (Market Map) only.
 # ----------------------------------------------------------------------------
 
 with st.sidebar:
@@ -143,7 +141,7 @@ tab1, tab2, tab3, tab4 = st.tabs(
 # --- Tab 1: Market Map -----------------------------------------------------
 
 with tab1:
-    st.subheader(f"Market Map — showing {len(df_map):,} of {len(df):,} listings")
+    st.subheader(f"Market Map - showing {len(df_map):,} of {len(df):,} listings")
 
     if len(df_map) == 0:
         st.warning("No listings match your filters. Widen the sidebar selection.")
@@ -240,7 +238,7 @@ with tab2:
                 f'<div style="background:{style["bg"]};color:white;'
                 f'padding:14px 18px;border-radius:6px;font-size:18px;'
                 f'margin-bottom:12px;">'
-                f'<b>{style["label"]}</b> — '
+                f'<b>{style["label"]}</b> - '
                 f'actual is {result["delta_pct"]:+.1f}% vs expected'
                 f"</div>",
                 unsafe_allow_html=True,
@@ -255,7 +253,7 @@ with tab2:
                 delta_color="off",
             )
             pi_lo, pi_hi = result["prediction_interval"]
-            c3.metric("95 % PI", f"{pi_lo:,.0f} – {pi_hi:,.0f}")
+            c3.metric("95 % PI", f"{pi_lo:,.0f} - {pi_hi:,.0f}")
 
             st.caption(
                 f"Assigned cluster #{result['cluster_id']} "
@@ -276,7 +274,7 @@ with tab2:
             in_lat = result["latitude"]
             in_lon = result["longitude"]
             cluster_df = df[df["cluster"] == result["cluster_id"]].copy()
-            # Quick equirectangular distance in km — Switzerland is small so the
+            # Quick equirectangular distance in km - Switzerland is small so the
             # approximation (111 km / deg lat, 75 km / deg lon at 47°) is fine.
             cluster_df["dist_km"] = np.sqrt(
                 ((cluster_df["latitude"] - in_lat) * 111.0) ** 2
@@ -307,7 +305,7 @@ with tab3:
     st.subheader("What Should I Charge?")
     st.caption(
         "Returns the cluster's empirical 10th / 90th log-residual percentile "
-        "band — i.e. where comparable listings actually price."
+        "band - i.e. where comparable listings actually price."
     )
 
     with st.form("opt_form"):
@@ -356,7 +354,7 @@ with tab3:
             fig.add_vrect(
                 x0=result["low_chf"], x1=result["high_chf"],
                 fillcolor="red", opacity=0.08, line_width=0,
-                annotation_text="10–90 % band", annotation_position="top left",
+                annotation_text="10-90 % band", annotation_position="top left",
             )
             fig.update_layout(xaxis_title="Monthly rent (CHF)", yaxis_title="Listings")
             st.plotly_chart(fig, use_container_width=True)
@@ -371,25 +369,25 @@ with tab4:
         """
 **Pipeline**
 
-1. **Scrape** — Flatfox public JSON API (`flatfox.ch/api/v1/public-listing/`).
+1. **Scrape** - Flatfox public JSON API (`flatfox.ch/api/v1/public-listing/`).
    The original homegate.ch target is fronted by DataDome CAPTCHA;
    Flatfox is the open alternative. APARTMENT-only filter, price reconstructed
    as gross rent (`rent_gross` or `rent_net + rent_charges`) for single
    consistent semantic. Real-address latitude/longitude come directly from
    Flatfox (more precise than PLZ-centroid geocoding).
 
-2. **Clean** — IQR outlier removal on `chf_per_m2`, range filters on price /
+2. **Clean** - IQR outlier removal on `chf_per_m2`, range filters on price /
    size / rooms, defensive null-drop on lat/lon and canton. Result: 5010 raw
    → 3428 cleaned apartments.
 
-3. **Cluster** — Hierarchical clustering with Ward linkage on
+3. **Cluster** - Hierarchical clustering with Ward linkage on
    `(chf_per_m2, rooms, lat, lon)`, all StandardScaler-d. Cut at k=6 with
    `scipy.cluster.hierarchy.fcluster` (maxclust). Six chosen as a balance
-   between interpretability and cluster balance — k=4 and k=5 give marginally
-   higher silhouette but produce one dominant cluster (37–47 % of data) which
+   between interpretability and cluster balance - k=4 and k=5 give marginally
+   higher silhouette but produce one dominant cluster (37-47 % of data) which
    would mechanically own most of the downstream regression.
 
-4. **Per-cluster log-linear regression** — For each cluster, fit
+4. **Per-cluster log-linear regression** - For each cluster, fit
    `log(price_chf) ~ log(size_m2) + rooms` on an 80 % training split,
    compute residual std + 10/90 percentiles on the held-out 20 % test set,
    all in log-space. Sparse-cluster fallback (n < 30) uses a globally fit
@@ -410,16 +408,16 @@ with tab4:
 **Why these choices**
 
 - **Hierarchical clustering over k-means**: deterministic (no random init),
-  the dendrogram is itself a defensible artifact, no implicit
+  the dendrogram is a useful artifact to show, and there's no implicit
   spherical-cluster assumption.
 - **Ward linkage**: minimises within-cluster variance, gives
-  similarly-sized clusters — which matters because we fit a per-cluster
-  regression and want each to have a usable sample size.
+  similarly-sized clusters. That matters because each cluster gets its
+  own regression and I want each one to have a usable sample size.
 - **Features `(chf_per_m2, rooms, lat, lon)`**: `chf_per_m2` captures the
-  market tier; `rooms` captures the apartment archetype; `lat/lon` keeps
+  market tier, `rooms` captures the apartment archetype, `lat/lon` keeps
   comparables spatially coherent. All four standardised so no single
   feature dominates the Euclidean distance.
-- **Log-linear regression**: rents are approximately log-normal —
+- **Log-linear regression**: rents are approximately log-normal -
   log-linear gives constant percentage error rather than constant CHF
   error, the right inductive bias for prices.
 - **Train/test split for residuals**: residual std and 10/90 percentiles
@@ -441,8 +439,8 @@ single new observation, not a *confidence interval* (CI). CI is for the
 mean prediction; PI is for a single new observation. Different.
 
 **Multicollinearity acknowledgment**: `log(size_m2)` and `rooms`
-correlate ~0.7–0.85. We use the model for prediction only — coefficient
-interpretation is not exposed — so multicollinearity is acknowledged
+correlate ~0.7-0.85. We use the model for prediction only - coefficient
+interpretation is not exposed - so multicollinearity is acknowledged
 but does not threaten validity.
 
 **Cluster assignment for new listings**: the clustering uses 4D features
@@ -458,13 +456,13 @@ training-time cluster. Expected, not a bug.
   listings can land in the same cluster either because they're nearby OR
   because they have similar price/size.
 - *No quality features*: year built, floor, balcony, condition, energy
-  class — all missing from Flatfox. Material to price.
+  class - all missing from Flatfox. Material to price.
 - *PLZ-centroid geocoding fallback at inference*: scrape.py uses
   real-address lat/lon, but new-listing input only has PLZ, geocoded to
   the PLZ centroid via pgeocode.
 - *Point-in-time snapshot*: no re-scraping cron.
 - *No baseline comparison*: a naïve "mean CHF/m² per canton" baseline
   would prove clustering adds value over a non-clustered approach. Not
-  built here — acknowledged.
+  built here - acknowledged.
         """
     )

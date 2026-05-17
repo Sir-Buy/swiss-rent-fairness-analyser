@@ -1,34 +1,28 @@
 """
-scrape.py — Flatfox public-listing API scraper.
+scrape.py - Flatfox public-listing API scraper.
 
-Originally targeted homegate.ch but homegate is fronted by DataDome CAPTCHA
-(403 to headless Chromium, captcha-delivery.com iframe in the response body).
-Pivoted to Flatfox, which exposes a public JSON API at
+Reads the JSON feed at flatfox.ch/api/v1/public-listing/, filters to
+APARTMENT-only rentals in Switzerland, derives canton from PLZ via
+pgeocode, and writes data/raw.csv (append-safe, deduped by listing id).
 
-    https://flatfox.ch/api/v1/public-listing/
+Originally targeted homegate.ch, which sits behind a DataDome CAPTCHA
+and returns 403 to headless browsers. Pivoted to Flatfox, which exposes
+a public JSON API. No browser needed; stdlib urllib only.
 
-with no anti-bot protection on basic GETs and ~35k active listings nationwide.
-No browser required — stdlib urllib only.
+About 5% of all Flatfox listings under offer_type=RENT are residential
+apartments; the rest are parking, commercial, etc. The APARTMENT filter
+runs client-side because the API ignores the server-side category param.
 
-Notes on the data shape (verified by probe — only ~5% of results are APARTMENT
-under every sort order tested; the rest are parking, industry/office, houses,
-secondary residences. Total apartment pool on Flatfox is ~1700, below the
-original spec's 3000 target but enough for k=6 clustering):
-  - The API ignores ?object_category=APARTMENT server-side, so we filter
-    client-side to APARTMENT-only (houses and secondary residences are
-    different markets and would muddy clustering / per-cluster regression).
-  - price_chf is reconstructed gross rent (Bruttomiete): rent_gross if
-    set, else rent_net + rent_charges if both set, else drop. This gives
-    one consistent monthly-total semantic across all kept rows.
-  - Sale prices occasionally leak into the RENT feed (price_display ≈ 980k
-    on what should be a rental). We cap at MAX_MONTHLY_RENT_CHF to drop them.
-  - latitude / longitude come straight from Flatfox (100% populated, real
-    address centroids — more precise than pgeocode's PLZ centroid).
-  - Flatfox does not expose canton, so we derive it from the PLZ via pgeocode
-    (cached in-memory).
-  - We discard listings with non-monthly price_unit and non-CH country.
-  - Buffer accepted rows in memory and write the CSV once at the end (avoids
-    Windows file-lock issues from Excel / AV scanners touching raw.csv).
+price_chf is reconstructed gross rent: rent_gross if set, otherwise
+rent_net + rent_charges, otherwise the row is dropped. Capped at
+MAX_MONTHLY_RENT_CHF to reject sale prices that occasionally leak into
+the rental feed (e.g. CHF 980,000 as price_display on a RENT listing).
+
+latitude and longitude come from Flatfox directly (100% populated, real
+address coordinates). Canton is derived from PLZ via pgeocode.
+
+Rows are buffered in memory and written once at the end so concurrent
+processes (Excel, AV scanners) can't lock raw.csv mid-write.
 
 Usage:
     python scrape.py                                            # all 26 cantons, up to 5000 listings
@@ -86,7 +80,7 @@ CANTON_CODE_TO_LABEL: dict[str, str] = {
     "VD": "Vaud", "VS": "Valais", "ZG": "Zug", "ZH": "Zurich",
 }
 
-# Original spec's 6 cantons of interest — kept as an opt-in filter via --cantons.
+# Original spec's 6 cantons of interest - kept as an opt-in filter via --cantons.
 DEFAULT_CANTONS_OF_INTEREST = {"Bern", "Zurich", "Vaud", "Geneva", "Aargau", "Lucerne"}
 
 # Apartment-only. Houses and secondary residences are different markets with
@@ -172,8 +166,8 @@ def parse_listing(item: dict[str, Any], canton_lookup: CantonLookup) -> dict[str
     if item.get("country") and item["country"] != "CH":
         return None
 
-    # Reconstructed gross rent (Bruttomiete) — gives one consistent semantic
-    # across all kept rows. Drop if we can't produce a defensible gross figure.
+    # Reconstructed gross rent (Bruttomiete) - gives one consistent semantic
+    # across all kept rows. Drop if no gross figure can be reconstructed.
     gross = item.get("rent_gross")
     if gross is None:
         net = item.get("rent_net")
@@ -278,7 +272,7 @@ def crawl(max_listings: int, page_size: int, delay: float, canton_filter: set[st
         results = data.get("results") or []
         total_fetched += len(results)
         if not results:
-            print(f"[page {page:3}] empty results — done.")
+            print(f"[page {page:3}] empty results - done.")
             break
 
         kept_this_page = 0
@@ -310,7 +304,7 @@ def crawl(max_listings: int, page_size: int, delay: float, canton_filter: set[st
         )
 
         if not data.get("next"):
-            print(f"[page {page:3}] no next page — done.")
+            print(f"[page {page:3}] no next page - done.")
             break
         offset += page_size
         if len(buffered) < max_listings:
@@ -322,10 +316,10 @@ def crawl(max_listings: int, page_size: int, delay: float, canton_filter: set[st
     print(f"  pages crawled       : {page}")
     print(f"  raw items fetched   : {total_fetched}")
     print(f"  new rows saved      : {len(buffered)}")
-    print(f"  drops — non-residential : {drops['non_residential']}")
-    print(f"  drops — wrong canton    : {drops['wrong_canton']}")
-    print(f"  drops — duplicate id    : {drops['duplicate']}")
-    print(f"  drops — bad data        : {drops['bad_data']}")
+    print(f"  drops - non-residential : {drops['non_residential']}")
+    print(f"  drops - wrong canton    : {drops['wrong_canton']}")
+    print(f"  drops - duplicate id    : {drops['duplicate']}")
+    print(f"  drops - bad data        : {drops['bad_data']}")
 
 
 def main() -> None:

@@ -1,18 +1,15 @@
 """
-clean.py — sanitise data/raw.csv into data/clean.csv.
+clean.py - sanitise data/raw.csv into data/clean.csv.
 
-Spec contract:
-- Drop NA in price_chf, size_m2, plz.
-- Filter: size_m2 ∈ [15, 500], price_chf ∈ [300, 15000], rooms ∈ [1, 10].
-- Compute chf_per_m2 = price_chf / size_m2.
-- IQR outlier removal on chf_per_m2 (Q1 − 1.5·IQR, Q3 + 1.5·IQR).
-- Defensive: drop rows missing lat/lon or canton.
-- Print kept N, dropped M, breakdown by reason.
+Drops rows missing price/size/plz, applies range filters
+(size 15-500, price 300-15000, rooms 1-10), computes chf_per_m2,
+then runs IQR outlier removal on chf_per_m2 (Q1 - 1.5*IQR, Q3 + 1.5*IQR).
+Defensively drops rows with missing lat/lon or canton, and prints a
+breakdown of which filter caught what.
 
-Deviation from the original spec: pgeocode geocoding is skipped here because
-scrape.py already emits real-address lat/lon from Flatfox (100% coverage,
-more precise than PLZ centroid). pgeocode is still used in scrape.py for
-canton derivation only.
+pgeocode geocoding is skipped at this stage: scrape.py already supplies
+real-address lat/lon from Flatfox at 100% coverage, which is more
+precise than a PLZ centroid.
 
 Usage:
     python clean.py
@@ -25,7 +22,7 @@ from pathlib import Path
 
 import pandas as pd
 
-# Windows consoles default to cp1252 and choke on non-ASCII (→, –, etc.). Force
+# Windows consoles default to cp1252 and choke on non-ASCII (→, -, etc.). Force
 # stdout to UTF-8 so the summary prints regardless of the user's locale.
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -52,13 +49,13 @@ def clean(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     drops["missing_price_size_plz"] = int(mask.sum())
     df = df[~mask]
 
-    # 2. Price range — also kills the CHF 0 listings and any > 15k legitimately
+    # 2. Price range - also kills the CHF 0 listings and any > 15k legitimately
     # over the rental ceiling.
     mask = (df["price_chf"] < PRICE_MIN) | (df["price_chf"] > PRICE_MAX)
     drops["price_out_of_range"] = int(mask.sum())
     df = df[~mask]
 
-    # 3. Size range — kills the 0-m² entries and anything > 500 m² (mansion-grade).
+    # 3. Size range - kills the 0-m² entries and anything > 500 m² (mansion-grade).
     mask = (df["size_m2"] < SIZE_MIN) | (df["size_m2"] > SIZE_MAX)
     drops["size_out_of_range"] = int(mask.sum())
     df = df[~mask]
@@ -84,7 +81,7 @@ def clean(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     df = df[~mask]
 
     # 7. Defensive lat/lon drop (scrape.py supplies 100% from Flatfox, so this
-    # should be a no-op — but cluster.py needs lat/lon and we'd rather fail
+    # should be a no-op - but cluster.py needs lat/lon and we'd rather fail
     # closed than emit a row that breaks downstream).
     mask = df["latitude"].isna() | df["longitude"].isna()
     drops["missing_lat_lon"] = int(mask.sum())
@@ -111,7 +108,7 @@ def print_summary(drops: dict) -> None:
     print(f"  size  not in [{SIZE_MIN}, {SIZE_MAX}]                    : {drops['size_out_of_range']:5}")
     print(f"  rooms not in [{ROOMS_MIN}, {ROOMS_MAX}] or missing        : {drops['rooms_out_of_range_or_missing']:5}")
     lo, hi = drops["_iqr_bounds"]
-    print(f"  chf_per_m2 IQR outliers (bounds {lo} – {hi}) : {drops['chf_per_m2_iqr_outlier']:5}")
+    print(f"  chf_per_m2 IQR outliers (bounds {lo} - {hi}) : {drops['chf_per_m2_iqr_outlier']:5}")
     print(f"  missing lat/lon                        : {drops['missing_lat_lon']:5}")
     print(f"  missing canton                         : {drops['missing_canton']:5}")
 

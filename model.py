@@ -1,47 +1,50 @@
 """
-model.py — fair-price evaluator + rent optimiser (Step 4, the ML core part 2).
+model.py - fair-price evaluator and rent optimiser.
 
-What this module exposes:
+Two functions exposed:
 
   evaluate_fairness(price_chf, size_m2, rooms, plz) -> dict
-      For renters. Geocodes the PLZ, assigns the nearest cluster, runs
-      that cluster's log-linear regression to get an expected gross rent,
-      and reports a verdict + 95 % parametric *prediction interval*
-      (PI, not CI — see "ML conventions" in CLAUDE.md).
+      For renters. Geocodes the PLZ, picks the nearest cluster centroid,
+      runs that cluster's log-linear regression to predict gross rent,
+      and reports a verdict plus a 95% parametric prediction interval.
 
   optimize_rent(size_m2, rooms, plz) -> dict
-      For landlords. Same cluster assignment, returns suggested rent +
-      empirical 10/90 percentile band from the cluster's test-set
-      residuals.
+      For landlords. Same cluster assignment, returns suggested rent and
+      the empirical 10th/90th percentile band from the cluster's
+      held-out test-set residuals.
 
-Why two different uncertainty framings (in case anyone asks):
-  - Evaluator: parametric Gaussian PI on log-residuals → "is this
-    listing within model uncertainty?" Asks a statistical question.
-  - Optimiser: empirical 10/90 of observed residuals → "where do
-    similar listings actually price?" Asks a market question.
-  They answer different questions on purpose.
+The two framings differ on purpose:
+  - Evaluator: parametric Gaussian PI on log-residuals. Statistical
+    question: is this listing within model uncertainty?
+  - Optimiser: empirical 10/90 percentile band. Market question:
+    where do comparable listings actually price?
 
 Build (when run as a script):
-  - Reads data/clustered.csv (3428 rows, 6 clusters)
-  - For each cluster: 80/20 train/test split (random_state=42), fits
-    log(price_chf) ~ log(size_m2) + rooms on train, computes residual std
-    and 10/90 percentiles on test — both in log-space.
-  - Cluster centroid in the StandardScaler-d (rooms, lat, lon) subspace
-    (chf_per_m2 dimension dropped — unknown for a new listing).
-  - Sparse-cluster fallback: n < SPARSE_THRESHOLD → reuse a globally fit
-    regression instead. Won't trigger on the current dataset (smallest
-    cluster is 351) but the code path exists and is exercised by the
-    fallback unit test.
-  - Saves everything into data/model.pkl (extending the Step 3 pickle).
+  - Reads data/clustered.csv.
+  - For each cluster: 80/20 train/test split (random_state=42),
+    fits log(price_chf) ~ log(size_m2) + rooms on train, computes
+    residual std and 10/90 percentiles on test, all in log-space.
+  - Computes the cluster centroid in the StandardScaler'd
+    (rooms, lat, lon) 3D subspace (the chf_per_m2 dimension is dropped
+    since it is unknown at inference time).
+  - Sparse-cluster fallback: n < SPARSE_THRESHOLD falls back to a
+    globally-fit regression. Does not trigger on the current dataset
+    (smallest cluster has 351 rows) but the code path exists.
+  - Writes the full pickle to data/model.pkl. The pickle is loaded by
+    app.py at startup and never refit at request time.
 
-Multicollinearity disclosure: log(size_m2) and rooms correlate ~0.7-0.85.
-We use the regression for prediction only — coefficient interpretation
-is not used downstream — so multicollinearity is acknowledged but does
-not threaten the validity of the predictions or intervals.
+Multicollinearity note: log(size_m2) and rooms correlate around
+0.7-0.85. The regression is used for prediction only, not coefficient
+interpretation, so multicollinearity is acknowledged but does not
+threaten validity.
+
+PI vs CI: ±1.96 * residual_std around a single new observation is a
+prediction interval, not a confidence interval. CI is for the mean
+prediction. Different objects.
 
 Usage:
     python model.py            # rebuild data/model.pkl from clustered.csv
-    python model.py --sanity   # rebuild and run a sanity check
+    python model.py --sanity   # rebuild and run a self-check on a known row
 """
 
 from __future__ import annotations
@@ -81,7 +84,7 @@ TEST_SIZE = 0.2
 # Z-score margin used for the parametric prediction interval in log-space.
 PI_Z = 1.96  # ≈ 95 % under normal log-residuals
 
-# Verdict thresholds — % deviation of actual from expected.
+# Verdict thresholds - % deviation of actual from expected.
 VERDICT_THRESHOLDS = [
     (-10.0, "underpriced"),     # actual < expected − 10 %
     (10.0, "fair"),             # within ± 10 %
@@ -167,7 +170,7 @@ def build_models(df: pd.DataFrame, scaler) -> dict:
     """Returns the dict that ends up pickled (extends Step 3's pickle)."""
     print(f"Building per-cluster models from {len(df)} rows...")
 
-    # Global fallback model — fit on the whole dataset, used when a cluster
+    # Global fallback model - fit on the whole dataset, used when a cluster
     # is below SPARSE_THRESHOLD. Also serves as a "default" baseline.
     g_train, g_test = train_test_split(df, test_size=TEST_SIZE, random_state=RANDOM_STATE)
     g_reg, g_std, g_p10, g_p90 = _fit_one(g_train, g_test)
@@ -214,15 +217,14 @@ def build_models(df: pd.DataFrame, scaler) -> dict:
 
 
 def build() -> None:
-    """Build data/model.pkl from data/clustered.csv. Self-contained — does NOT
+    """Build data/model.pkl from data/clustered.csv. Self-contained - does NOT
     depend on a pre-existing pickle, so this works on a fresh Streamlit Cloud
     deploy where cluster.py hasn't been re-run."""
     if not CLUSTERED_CSV.exists():
         raise SystemExit(f"missing input: {CLUSTERED_CSV}. Run cluster.py first.")
 
-    # PALETTE/K/FEATURES live in cluster.py (single source of truth for the
-    # clustering hyperparameters). Imported here at build time so we don't
-    # have to depend on the Step 3 pickle existing.
+    # PALETTE/K/FEATURES are defined in cluster.py. Imported here at build
+    # time so model.build() does not require an existing pickle.
     from cluster import FEATURES as CLUSTER_FEATURES, PALETTE, K
 
     df = pd.read_csv(CLUSTERED_CSV)
@@ -357,7 +359,7 @@ class FairPriceModel:
         }
 
 
-# Module-level convenience wrappers — useful for ad-hoc scripts / tests / app.
+# Module-level convenience wrappers - useful for ad-hoc scripts / tests / app.
 _MODEL: FairPriceModel | None = None
 
 
@@ -383,7 +385,7 @@ def optimize_rent(size_m2: float, rooms: float, plz: str | int) -> dict:
 def _sanity_check() -> None:
     """Pull a known row from clustered.csv, evaluate it, sanity-check predictions."""
     df = pd.read_csv(CLUSTERED_CSV)
-    # Pick a row near the median chf_per_m2 of its cluster — most "average".
+    # Pick a row near the median chf_per_m2 of its cluster - most "average".
     df = df.assign(_chfm2=df["price_chf"] / df["size_m2"])
     df = df.sort_values("_chfm2").reset_index(drop=True)
     sample = df.iloc[len(df) // 2]

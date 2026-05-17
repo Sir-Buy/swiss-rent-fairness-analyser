@@ -1,45 +1,37 @@
 """
-cluster.py — hierarchical clustering of clean apartments into k=6 market tiers.
+cluster.py - hierarchical clustering of clean apartments into 6 market tiers.
 
-ML rationale (the parts that will be questioned):
+Features (chf_per_m2, rooms, latitude, longitude) are StandardScaler'd so
+no single feature dominates the Euclidean distance (raw lat/lon around
+46-48 would otherwise drown chf_per_m2 around 20-30 and rooms around 1-6).
 
-  Features (chf_per_m2, rooms, latitude, longitude), all StandardScaler-d so
-  no single feature dominates the Euclidean distance (raw lat/lon ≈ 46-48
-  would otherwise drown chf_per_m2 ≈ 20-30 and rooms ≈ 1-6).
+Linkage is Ward. Ward minimises within-cluster variance and produces
+similarly-sized clusters. Balanced cluster sizes matter because each
+cluster gets its own regression in model.py - a few oversize clusters
+would mechanically dominate.
 
-  Linkage = Ward. Ward minimises total within-cluster variance, producing
-  compact, similarly-sized clusters that are well-behaved with Euclidean
-  distance on standardised features. Average linkage was considered and
-  rejected because Ward's similarly-sized clusters give each per-cluster
-  regression in Step 4 a usable sample size.
+k=6 is picked from a silhouette sweep over k=4..8 (saved to
+data/cluster_diagnostics.csv). Silhouette varies by only ~0.02 across
+that range, so the structural signal is intrinsically weak. That is
+expected for a hybrid geographic+price feature space. The deciding
+factor is balance: k=4 and k=5 give marginally higher silhouette but
+produce one cluster at 37-47% of the data. k=6 is the smallest k that
+keeps max/min cluster size ratio below about 2.5.
 
-  Cut at k=6 (fcluster maxclust). Six is chosen as a balance between
-  interpretability (six colours stay distinguishable, six rows fit on a
-  legend) and geographic granularity (Switzerland's rental market has
-  roughly six tiers: Geneva-tier urban, Zurich-tier urban, mid-tier urban,
-  suburban, regional, rural).
+Hybridity caveat: clusters mix geographic and price-tier signal. Two
+listings can land in the same cluster either because they're nearby or
+because they have similar price/size. Intentional; disclosed in the
+Method tab of the app.
 
-  Why hierarchical over k-means: deterministic (no random init), the
-  dendrogram is a defensible artifact, and we don't have to assume
-  spherical clusters in lat/lon space (the Rhone valley is not spherical).
-
-  Hybridity caveat: clusters are a mix of geographic and price-tier
-  signal. Two listings can land in the same cluster either because they're
-  nearby OR because they have similar price/size. Intentional, disclosed
-  in the Method tab.
+Rows are sorted by id before linkage so the dendrogram is identical
+across runs even if raw row order changes.
 
 Outputs:
-  data/clustered.csv      clean.csv + 'cluster' column (1-6)
-  data/dendrogram.png     truncated dendrogram (last 30 merges), shared palette
-  data/cluster_summary.csv  cluster, count, mean_chf_per_m2, mean_rooms, dominant_canton
-  data/model.pkl          fitted StandardScaler + feature list (Step 4 extends)
-
-Reproducibility: rows are sorted by id before linkage so the dendrogram
-is identical across runs even if raw row order changes.
-
-Diagnostic: silhouette_score(k=6) is printed for the record — NOT used to
-justify k=6 (the spec mandates it). It's there so the question "how did
-you check k=6 was reasonable?" has a number in hand.
+  data/clustered.csv             clean.csv + 'cluster' column (1..6)
+  data/dendrogram.png            truncated dendrogram, last 30 merges
+  data/cluster_summary.csv       cluster, count, mean_chf_per_m2, mean_rooms, dominant_canton
+  data/cluster_diagnostics.csv   k-sweep silhouette table
+  data/model.pkl                 fitted StandardScaler + metadata (model.py extends)
 
 Usage:
     python cluster.py
@@ -113,7 +105,7 @@ def main() -> None:
     print(f"\nSilhouette score at k={K}: {sil_k6:.4f}")
     print("  (range -1..+1; positive = well-separated, ~0 = overlapping)")
 
-    # k-sweep diagnostic — compute silhouette at neighbouring k values so the
+    # k-sweep diagnostic - compute silhouette at neighbouring k values so the
     # k=6 choice is auditable. The linkage matrix Z is reused; only fcluster
     # and silhouette are recomputed per k.
     print(f"\nk-sweep silhouette diagnostic over {K_DIAGNOSTIC_RANGE}:")

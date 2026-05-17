@@ -1,5 +1,5 @@
 # Originally pinned Playwright for headless homegate.ch scraping. Homegate is
-# now behind DataDome CAPTCHA — pivoted to Flatfox's public JSON API, which
+# now behind DataDome CAPTCHA - pivoted to Flatfox's public JSON API, which
 # only needs stdlib urllib (already in Python). All scraping deps are now in
 # the main requirements.txt (pgeocode for canton derivation from PLZ).
 #
