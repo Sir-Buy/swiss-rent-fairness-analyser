@@ -72,7 +72,13 @@ CLEAN_CSV = DATA_DIR / "clean.csv"
 CLUSTERED_CSV = DATA_DIR / "clustered.csv"
 DENDROGRAM_PNG = DATA_DIR / "dendrogram.png"
 CLUSTER_SUMMARY_CSV = DATA_DIR / "cluster_summary.csv"
+CLUSTER_DIAGNOSTICS_CSV = DATA_DIR / "cluster_diagnostics.csv"
 MODEL_PKL = DATA_DIR / "model.pkl"
+
+# Range of k values for the silhouette diagnostic. We report neighbouring
+# values so anyone reviewing the project can see whether k=6 is the local
+# best or whether a different k would have been a stronger pick.
+K_DIAGNOSTIC_RANGE = (4, 5, 6, 7, 8)
 
 FEATURES = ["chf_per_m2", "rooms", "latitude", "longitude"]
 K = 6
@@ -103,9 +109,30 @@ def main() -> None:
     df.to_csv(CLUSTERED_CSV, index=False)
     print(f"Saved cluster assignments -> {CLUSTERED_CSV.name}")
 
-    sil = silhouette_score(X, labels, metric="euclidean")
-    print(f"\nSilhouette score at k={K}: {sil:.4f}")
+    sil_k6 = silhouette_score(X, labels, metric="euclidean")
+    print(f"\nSilhouette score at k={K}: {sil_k6:.4f}")
     print("  (range -1..+1; positive = well-separated, ~0 = overlapping)")
+
+    # k-sweep diagnostic — compute silhouette at neighbouring k values so the
+    # k=6 choice is auditable. The linkage matrix Z is reused; only fcluster
+    # and silhouette are recomputed per k.
+    print(f"\nk-sweep silhouette diagnostic over {K_DIAGNOSTIC_RANGE}:")
+    diag_rows = []
+    for k in K_DIAGNOSTIC_RANGE:
+        labels_k = fcluster(Z, t=k, criterion="maxclust")
+        sil_k = silhouette_score(X, labels_k, metric="euclidean")
+        size_min = int(pd.Series(labels_k).value_counts().min())
+        size_max = int(pd.Series(labels_k).value_counts().max())
+        diag_rows.append({
+            "k": k,
+            "silhouette": round(float(sil_k), 4),
+            "min_cluster_size": size_min,
+            "max_cluster_size": size_max,
+        })
+        marker = "  <-- chosen" if k == K else ""
+        print(f"  k={k}  silhouette={sil_k:+.4f}  sizes [{size_min}, {size_max}]{marker}")
+    pd.DataFrame(diag_rows).to_csv(CLUSTER_DIAGNOSTICS_CSV, index=False)
+    print(f"k-sweep diagnostic -> {CLUSTER_DIAGNOSTICS_CSV.name}")
 
     summary = (
         df.groupby("cluster")
