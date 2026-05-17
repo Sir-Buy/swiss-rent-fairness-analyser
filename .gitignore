@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+*.pkl
+
+# Raw scrape output (regeneratable); cleaned + clustered CSVs are kept so the demo runs without re-scraping
+data/raw.csv
+data/*.log
+
+# One-off diagnostic / probe scripts
+_probe*.py
+_probe*.html
+_probe*.out
+_stats.py
